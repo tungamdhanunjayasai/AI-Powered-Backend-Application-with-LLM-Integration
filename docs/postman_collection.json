@@ -1,0 +1,49 @@
+{
+  "info": {
+    "name": "Tri9T CT-200 Assignment API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Ingest V1",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/documents/ingest-path?path=data/ct200_manual.pdf&version_number=1"
+      }
+    },
+    {
+      "name": "Ingest V2",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/documents/ingest-path?path=data/ct200_manual_v2.pdf&version_number=2"
+      }
+    },
+    {
+      "name": "Compare V1 V2",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/documents/1/compare?from_version=1&to_version=2"
+      }
+    },
+    {
+      "name": "Search pressure",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/nodes?q=pressure"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    }
+  ]
+}
