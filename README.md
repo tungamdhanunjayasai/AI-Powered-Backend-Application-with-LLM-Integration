@@ -1,222 +1,205 @@
-AI-Powered Backend Application with LLM Integration
+# Agent Evaluation Platform
 
-A FastAPI-based backend for extracting structured hierarchy data from
-PDF documents, managing immutable document versions, detecting changes
-between versions, and generating question-and-answer content with an LLM
-integration and an offline fallback.
+A small, reproducible platform for evaluating tool-using AI agents. It runs agents against isolated, fixture-based customer-support scenarios, records a full event trace for every attempt, and scores each result on **outcome, policy, trajectory and response accuracy**, so a failure can be explained rather than just counted.
 
-Overview
+The central idea: **a confident final answer is not proof of success.** The platform checks the final environment state, not what the agent says. A deliberately broken "false-success" agent that replies *"Your refund has been issued"* without issuing one is caught and marked as a failure.
 
-This project demonstrates backend API development and
-document-processing workflows for the CT-200 assignment. It processes
-PDF manuals into a searchable hierarchy, preserves document versions,
-compares versions to identify changes, and supports version-pinned
-selections and question generation.
+> **Status:** v0.1. Agents are deterministic scripted adapters (no live LLM calls yet), which makes runs fully reproducible for testing the evaluation pipeline itself. The adapter interface is designed so a real LLM agent can be plugged in.
 
-Key Features
+## Features
 
-PDF hierarchy extraction: Extracts structured content from PDF
-manuals.
+- **Isolated environments**: every attempt gets a fresh deep copy of the task fixture. Agents see only the customer request and authenticated customer context.
+- **Hidden-fixture evaluation**: evaluators read the hidden expected outcome and the final environment state independently of the agent's claims.
+- **Four evaluators**: outcome, policy, trajectory, response (see [Evaluation model](#evaluation-model)).
+- **Tool gateway with policy enforcement**: strict Pydantic-validated tool arguments; blocks cross-customer access, over-refunds, and refunds without a valid approval, and records each violation.
+- **Full tracing**: ordered events per attempt (`attempt_started`, `tool_requested`, `tool_finished`, `environment_changed`, `attempt_finished`).
+- **Decoupled worker**: the API enqueues jobs; a separate worker claims, executes, scores and summarises them.
+- **Experiments**: run several agent configs over a dataset split with repetitions, idempotent creation (`Idempotency-Key`), cancellation, side-by-side comparison, and JSON/CSV export.
+- **Execution vs evaluation status kept separate**, so infrastructure errors are never mistaken for agent failures.
+- **Versioned datasets** and PostgreSQL persistence with a SQLite import helper.
 
-Document versioning: Stores versions as immutable snapshots
-rather than overwriting earlier versions.
+## Architecture
 
-Change detection: Compares document versions and identifies
-unchanged, changed, added, and removed hierarchy items.
+```mermaid
+flowchart LR
+    Client[Client / Swagger UI] --> API[FastAPI app]
+    API --> DB[(PostgreSQL)]
+    Worker[Worker] --> DB
+    Worker --> Agent[Agent adapter]
+    Agent --> Gateway[Tool gateway + fixture]
+    Gateway --> Trace[Trace recorder]
+    Worker --> Eval[Evaluators]
+    Eval --> DB
+```
 
-Browse and search APIs: Supports navigating and searching
-extracted document content.
+Flow: create an experiment via the API → jobs are queued → the worker runs each attempt in a fresh environment → events and scores are stored → the experiment summary is updated.
 
-Version-pinned selections: Allows selections to remain
-associated with the document version from which they were made.
+## Tech stack
 
-LLM-assisted Q&A generation: Generates question-and-answer
-content using the configured model integration when available.
+Python 3.11+, FastAPI, Uvicorn, Pydantic v2, PostgreSQL (psycopg 3), python-dotenv, httpx, pytest, Docker / Docker Compose.
 
-Offline fallback: Provides a fallback path so the workflow can
-still be exercised when an LLM service is not configured or
-unavailable.
+## Project structure
 
-Staleness detection: Helps identify selections or generated
-content that may need review after a document update.
+```
+app/
+  main.py                 FastAPI routes and dashboard
+  cli.py                  `smoke` command
+  config.py               Loads DATABASE_URL from .env
+  schemas.py              Request models
+  store.py                PostgreSQL persistence layer
+  trace.py                Event recorder
+  reports.py              JSON / CSV export
+  seed.py                 Seeds the sample dataset and agent configs
+  agents/                 Adapter interface + scripted agents
+  environments/support.py Tool gateway and policy checks
+  evaluators/support.py   Outcome, policy, trajectory, response scoring
+  execution/worker.py     Job claiming, execution and scoring
+  migrations/001_initial.sql
+datasets/support/tasks.json   Sample support scenarios
+scripts/migrate_sqlite_to_postgres.py
+tests/
+Dockerfile, compose.yaml, pyproject.toml, .env.example
+```
 
-Automated tests: Includes tests for core application behavior.
+## Getting started
 
-Technology Stack
+### Prerequisites
 
-Language: Python
+- Python 3.11+
+- A PostgreSQL database (the project is set up for [Supabase](https://supabase.com), but any PostgreSQL works)
 
-Backend framework: FastAPI
+### Install
 
-Data validation: Pydantic
-
-ORM / persistence: SQLAlchemy
-
-Database: SQLite
-
-PDF processing: PyMuPDF
-
-API documentation: OpenAPI / Swagger UI
-
-Testing: pytest
-
-The actual LLM provider and model depend on the configuration used in
-your environment. Do not add a provider name unless it is configured
-in the project.
-
-Project Structure
-
-tri9t_ct200_assignment/
-├── app/                 # FastAPI application and backend logic
-├── data/                # Local data and document-related files
-├── docs/                # Supporting documentation
-├── tests/               # Automated tests
-├── .env.example         # Example environment configuration
-├── requirements.txt     # Python dependencies
-└── README.md            # Project documentation
-
-The exact files inside each directory may vary by project revision.
-
-Getting Started
-
-1. Prerequisites
-
-Python 3.10 or later recommended
-
-pip
-
-A terminal or command prompt
-
-2. Open the project directory
-
-Change into the project folder that contains requirements.txt:
-
-cd tri9t_ct200_assignment
-
-If the folder is inside a downloaded ZIP, extract the ZIP first and
-navigate into the inner project directory.
-
-3. Create and activate a virtual environment
-
-Windows (PowerShell):
+```bash
+git clone https://github.com/<your-username>/<your-repo>.git
+cd <your-repo>
 
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate          # Windows PowerShell: .\.venv\Scripts\Activate.ps1
+pip install -e ".[test]"
+```
 
-Windows (Command Prompt):
+### Configure
 
-python -m venv .venv
-.venv\Scripts\activate
+Copy the example environment file and put in **your own** database URL:
 
-macOS / Linux:
+```bash
+cp .env.example .env               # Windows: Copy-Item .env.example .env
+```
 
-python3 -m venv .venv
-source .venv/bin/activate
+```env
+DATABASE_URL=postgresql://postgres:<YOUR_DB_PASSWORD>@<YOUR_DB_HOST>:5432/postgres?sslmode=require&connect_timeout=10
+# Optional: a separate database for tests
+# TEST_DATABASE_URL=postgresql://...
+APP_ENV=development
+```
 
-4. Install dependencies
+URL-encode special characters in the password (for example `@` → `%40`, `$` → `%24`). The app requires `DATABASE_URL`, rejects SQLite paths, and never silently falls back to a local database. **Never commit `.env`.**
 
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+### Run
 
-5. Configure environment variables
+```bash
+python -m app.seed                      # create tables, load dataset, add sample agent configs
+python -m app.cli smoke                 # create an experiment and run it end to end
+# or run the pieces separately:
+uvicorn app.main:app --reload           # API
+python -m app.execution.worker --drain  # process all queued jobs
+```
 
-If the project uses an external LLM provider, copy .env.example to
-.env and fill in only the variables required by the provider
-configured in the code.
+Open <http://127.0.0.1:8000/> for the dashboard or <http://127.0.0.1:8000/docs> for Swagger UI.
 
-Windows:
+### Docker
 
-Copy-Item .env.example .env
+```bash
+export DATABASE_URL="postgresql://..."   # or put it in a local .env used by Compose
+docker compose up --build
+```
 
-macOS / Linux:
+The API and the worker both connect to the same PostgreSQL URL; no local database volume is needed.
 
-cp .env.example .env
+## Sample scenarios and agents
 
-Keep API keys private. Do not commit .env or secrets to GitHub. If no
-LLM credentials are configured, use the supported offline fallback if
-available.
+`python -m app.seed` loads five support tasks (eligible refund, ineligible refund, cross-customer access boundary, and more) and three scripted agent configs:
 
-6. Run the API
+| Config | Behaviour | Expected result |
+|---|---|---|
+| `cfg_correct` | Inspects order and return, requests approval, issues the refund, resolves the ticket | Pass |
+| `cfg_false_success` | Claims a refund was issued without doing anything | Fail (outcome + response) |
+| `cfg_wrong_order` | Tries to access another customer's order | Fail (policy) |
 
-From the directory containing the app folder, run:
+## API
 
-python -m uvicorn app.main:app --reload
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/datasets/import` | Import a versioned dataset |
+| `GET` | `/datasets` | List dataset versions |
+| `POST` / `GET` | `/agent-configs` | Create / list agent configurations |
+| `POST` | `/experiments` | Create an experiment (supports `Idempotency-Key`) |
+| `GET` | `/experiments/{id}` | Experiment details and summary |
+| `GET` | `/experiments/{id}/runs` | Runs in an experiment |
+| `POST` | `/experiments/{id}/cancel` | Cancel queued jobs |
+| `GET` | `/experiments/{id}/export?format=json\|csv` | Export results |
+| `POST` | `/comparisons` | Compare two experiments task by task |
+| `GET` | `/runs/{id}` | Run details with attempt |
+| `GET` | `/attempts/{id}/events` | Ordered trace events |
+| `GET` | `/health/live`, `/health/ready` | Liveness / readiness |
 
-The development server should be available at:
+### Example
 
-API base: http://127.0.0.1:8000
+```bash
+# 1. find the dataset version and config ids
+curl http://127.0.0.1:8000/datasets
+curl http://127.0.0.1:8000/agent-configs
 
-Swagger UI: http://127.0.0.1:8000/docs
+# 2. create an experiment
+curl -X POST http://127.0.0.1:8000/experiments \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_version_id": "<id>", "agent_config_ids": ["cfg_correct", "cfg_false_success"], "split": "all", "repetitions": 1}'
 
-ReDoc: http://127.0.0.1:8000/redoc
+# 3. run the worker, then inspect results
+python -m app.execution.worker --drain
+curl "http://127.0.0.1:8000/experiments/<experiment_id>/export?format=csv"
+```
 
-Health endpoint: http://127.0.0.1:8000/health
+## Evaluation model
 
-The endpoints above assume the application uses the default Uvicorn port
-and the health route documented in this project.
+Each attempt is scored by four independent evaluators, and a run passes only if all four pass.
 
-Testing
+| Evaluator | Checks |
+|---|---|
+| **Outcome** | Final environment state (refund total, ticket status) matches the hidden expected outcome |
+| **Policy** | No violations: cross-customer access, over-refund, refund without valid approval, invalid tool arguments |
+| **Trajectory** | Required inspections happened, and order lookup, return check and approval came *before* `issue_refund` |
+| **Response** | The final message does not claim success when the environment shows otherwise (false-success detection) |
 
-Run the automated tests from the project root:
+Policy and outcome are separate on purpose: a blocked attempt to access another customer's order is a policy failure even though no harmful effect occurred.
 
-python -m pytest -v
+## Testing
 
-The latest run recorded during development passed 7 tests. Run the
-test suite locally to verify the current checkout.
+```bash
+export TEST_DATABASE_URL="postgresql://..."   # a dedicated test database, NOT your application database
+pytest
+```
 
-Typical Workflow
+Database-backed tests are skipped unless `TEST_DATABASE_URL` is set, and the suite fails if it points at the same database as `DATABASE_URL`. Tests cover false-success detection, a passing correct agent with an ordered trace, and policy vs outcome separation.
 
-Load or process a source PDF.
+## Migrating existing SQLite data
 
-Extract its structured hierarchy.
+An append-only helper copies data from a SQLite file into PostgreSQL. It opens the source read-only, initialises the schema, inserts rows in foreign-key order, and leaves existing target rows untouched on conflicts.
 
-Store the extracted content as a document version.
+```bash
+python scripts/migrate_sqlite_to_postgres.py path/to/source.db
+```
 
-Browse or search the hierarchy through the API.
+Back up first and verify the printed row counts afterwards.
 
-Create a later version when the source document changes.
+## Roadmap
 
-Compare versions to review added, removed, changed, and unchanged
-items.
+- Plug in a real LLM-backed agent adapter alongside the scripted ones
+- More task categories and datasets beyond customer support
+- Authentication and rate limiting on the API
+- A richer dashboard for comparing experiments
 
-Generate Q&A content and review whether it is associated with the
-correct document version.
+## Author
 
-Check for stale selections or content after a version update.
-
-The exact request bodies and endpoint paths are defined by the running
-API and can be explored through Swagger UI at /docs.
-
-Engineering Considerations
-
-Earlier document versions should remain available for reliable
-comparison and traceability.
-
-LLM-generated content should be reviewed for correctness before
-being used in production.
-
-External model calls can fail or be rate-limited; error handling and
-the offline fallback improve development resilience.
-
-For production deployment, configure authentication, request
-validation, logging, database backups, rate limits, and secret
-management.
-
-SQLite is suitable for local development and demonstrations; a
-multi-user production deployment may require a managed database.
-
-Current Limitations and Next Improvements
-
-The next improvements would be to strengthen integration tests around
-external LLM failures, expand API error handling, and add more robust
-observability. Further enhancements could include richer retrieval
-strategies for RAG, configurable model providers, and
-authentication/authorization for protected endpoints.
-
-
-GitHub:
-tungamdhanunjayasai-27138
-
-This project is intended as an academic and portfolio demonstration of
-Python backend engineering, document processing, version management, and
-LLM-assisted workflows.
+**Tungam Dhanunjaya Sai**: [GitHub](https://github.com/tungamdhanunjayasai)
